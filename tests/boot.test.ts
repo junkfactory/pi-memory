@@ -57,3 +57,16 @@ describe("bootSection", () => {
 		await expect(bootSection()).resolves.toBeNull();
 	});
 });
+
+describe("redactPaths (via bootSection)", () => {
+	it("strips the db path line, keeps the rest", async () => {
+		execFileMock.queue = [
+			"# ai-memory boot: ok\n#   version: 0.10.0\n#   db: /Users/amielmontecillo/.agents/memory/ai-memory.db (schema=v80, 6 memories)\n#   tier: semantic\n- [long/fad33ada] some memory",
+		];
+		const out = await bootSection();
+		expect(out).toBeDefined();
+		expect(out).not.toContain(".agents/memory");
+		expect(out).toContain("#   version: 0.10.0");
+		expect(out).toContain("- [long/fad33ada] some memory");
+	});
+});
