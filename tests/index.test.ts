@@ -1,6 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import extension from "../src/index.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BOOT_MARKER } from "../src/boot.js";
+import extension from "../src/index.js";
 
 vi.mock("../src/boot.js", () => ({
 	BOOT_MARKER: "# ai-memory boot",
@@ -14,10 +14,13 @@ function makePi() {
 	return {
 		pi: {
 			on: (name: string, fn: (event?: unknown) => unknown) => {
-				(handlers[name] ??= []).push(fn);
+				const list = handlers[name] ?? [];
+				list.push(fn);
+				handlers[name] = list;
 			},
 		},
-		emit: async (name: string, event?: unknown) => Promise.all((handlers[name] ?? []).map((fn) => fn(event))),
+		emit: async (name: string, event?: unknown) =>
+			Promise.all((handlers[name] ?? []).map((fn) => fn(event))),
 	};
 }
 
@@ -49,7 +52,10 @@ describe("index", () => {
 		emit("session_start", { reason: "startup" });
 
 		await emit("before_agent_start", turnEvent());
-		const second = await emit("before_agent_start", turnEvent("base prompt\n\n# ai-memory boot\ninfo"));
+		const second = await emit(
+			"before_agent_start",
+			turnEvent("base prompt\n\n# ai-memory boot\ninfo"),
+		);
 		expect(bootSectionMock).toHaveBeenCalledTimes(1);
 		expect(second[0]).toBeUndefined();
 	});
@@ -60,7 +66,10 @@ describe("index", () => {
 		extension(pi as never);
 		emit("session_start", { reason: "startup" });
 
-		const result = await emit("before_agent_start", turnEvent(`base\n\n${BOOT_MARKER}\nexisting`));
+		const result = await emit(
+			"before_agent_start",
+			turnEvent(`base\n\n${BOOT_MARKER}\nexisting`),
+		);
 		expect(result[0]).toBeUndefined();
 		expect(bootSectionMock).not.toHaveBeenCalled();
 	});

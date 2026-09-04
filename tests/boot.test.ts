@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BOOT_MARKER, bootSection } from "../src/boot.js";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -11,7 +11,12 @@ vi.mock("node:child_process", () => ({
 // stub the promisified call target: promisify(execFile) calls execFile with
 // (file, args, options, callback). Provide a callback-style impl.
 execFileMock.mockImplementation(
-	(_file: unknown, _args: unknown, _opts: unknown, cb: (err: Error | null, out: { stdout: string }) => void) => {
+	(
+		_file: unknown,
+		_args: unknown,
+		_opts: unknown,
+		cb: (err: Error | null, out: { stdout: string }) => void,
+	) => {
 		const result = execFileMock.queue?.shift();
 		if (result instanceof Error) cb(result, { stdout: "" });
 		else cb(null, { stdout: result ?? "" });
@@ -26,7 +31,9 @@ describe("bootSection", () => {
 	it("returns formatted section on success", async () => {
 		execFileMock.queue = ["# ai-memory boot: info\nversion: 0.10.0"];
 		const out = await bootSection();
-		expect(out).toBe(`\n\n${BOOT_MARKER}\n# ai-memory boot: info\nversion: 0.10.0`);
+		expect(out).toBe(
+			`\n\n${BOOT_MARKER}\n# ai-memory boot: info\nversion: 0.10.0`,
+		);
 		expect(execFileMock).toHaveBeenCalledWith(
 			"ai-memory",
 			["boot", "--quiet"],
