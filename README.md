@@ -9,7 +9,7 @@ Pi extension injecting [ai-memory](https://github.com/alphaonedev/ai-memory-mcp)
 └─────────────┘    boot context       └──────────────┘
 ```
 
-Store/recall stay on the `ai-memory` CLI (see your AGENTS.md `### Memory Ops`); this extension only handles session boot injection.
+Store/recall stay on the `ai-memory` CLI (usage guidance is injected into each session's system prompt); this extension only handles session boot injection.
 
 ## Install
 
