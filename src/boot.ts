@@ -18,6 +18,21 @@ function redactPaths(text: string): string {
 }
 
 /**
+ * Memory usage guidance injected alongside boot facts. By contract, this
+ * package owns the agent-facing discipline for ai-memory — AGENTS.md does
+ * not duplicate it.
+ */
+const OPS = `# Memory usage
+When to recall: session/project start, before non-trivial decisions, when a past decision is referenced, before storing. Skip: trivial edits, info already grounded in context, same-session continuations.
+When to store proactively: learnings, preferences, decisions, corrections. Dedupe before storing; store atomic facts.
+
+- Recall relevant memory: \`ai-memory recall "<context>"\` (fuzzy/ranked); \`search "<text>"\` only for exact wording. \`-n <ns>\` to scope, \`--limit\` to cap, \`--format toon\` to save tokens
+- Store atomic facts: \`ai-memory store --title "..." --content "..." [--tier long]\` (default tier \`mid\` expires). Dedupe first via \`check-duplicate --title ... --content ...\`
+- Correct with \`update <id>\` — never pile near-duplicates on stale memories
+- Inspect: \`list\` / \`get <id>\` / \`stats\`
+- Destructive (\`delete\`, \`forget\`, \`gc\`) — confirm with user first`;
+
+/**
  * Run `ai-memory boot --quiet` and return the formatted system-prompt
  * section, or null when there is nothing to inject (missing binary,
  * non-zero exit, empty output). Never throws.
@@ -29,7 +44,7 @@ export async function bootSection(): Promise<string | null> {
 		});
 		const text = stdout.trim();
 		if (!text) return null;
-		return `\n\n${BOOT_MARKER}\n${redactPaths(text)}`;
+		return `\n\n${BOOT_MARKER}\n${redactPaths(text)}\n${OPS}`;
 	} catch {
 		return null;
 	}

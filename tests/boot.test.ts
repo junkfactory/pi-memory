@@ -31,9 +31,11 @@ describe("bootSection", () => {
 	it("returns formatted section on success", async () => {
 		execFileMock.queue = ["# ai-memory boot: info\nversion: 0.10.0"];
 		const out = await bootSection();
-		expect(out).toBe(
+		expect(out).toContain(
 			`\n\n${BOOT_MARKER}\n# ai-memory boot: info\nversion: 0.10.0`,
 		);
+		expect(out).toContain("# Memory usage");
+		expect(out).toContain("Destructive");
 		expect(execFileMock).toHaveBeenCalledWith(
 			"ai-memory",
 			["boot", "--quiet"],

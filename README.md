@@ -24,6 +24,7 @@ Requires the `ai-memory` CLI on PATH. Missing binary or empty DB → nothing is 
 - Injects `ai-memory boot --quiet` output once per session, appended to the system prompt under `# ai-memory boot`.
 - Re-boots on new/resumed/forked sessions (memory state may have changed).
 - Skips injection if boot output is already present (guards against `ai-memory wrap` double-injection).
+- A `# Memory usage` section (recall/store discipline; the agent-facing contract for the CLI) follows the boot facts — this package owns that guidance, so project AGENTS.md files don't have to.
 - A failed or empty boot is not retried within the same session.
 
 ## Development
