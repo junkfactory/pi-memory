@@ -71,4 +71,13 @@ describe("redactPaths (via bootSection)", () => {
 		expect(out).toContain("#   version: 0.10.0");
 		expect(out).toContain("- [long/fad33ada] some memory");
 	});
+
+	it("strips a db line without comment decoration", async () => {
+		execFileMock.queue = [
+			"# ai-memory boot: ok\ndb: /Users/me/memory.db (schema=v80)\n#   tier: semantic",
+		];
+		const out = await bootSection();
+		expect(out).not.toContain("memory.db");
+		expect(out).toContain("#   tier: semantic");
+	});
 });

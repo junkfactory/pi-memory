@@ -5,6 +5,9 @@ const run = promisify(execFile);
 
 export const BOOT_MARKER = "# ai-memory boot";
 
+/** Matches the boot header's db line regardless of leading decoration ("#   db: …", "db: …"). */
+const DB_LINE = /^\s*#*\s*db:/;
+
 /**
  * Strip operator-local paths from boot output before injecting: agents
  * should know what they know, not where it lives (and be tempted to edit
@@ -13,7 +16,7 @@ export const BOOT_MARKER = "# ai-memory boot";
 function redactPaths(text: string): string {
 	return text
 		.split("\n")
-		.filter((line) => !line.startsWith("#   db:"))
+		.filter((line) => !DB_LINE.test(line))
 		.join("\n");
 }
 
