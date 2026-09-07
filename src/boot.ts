@@ -26,11 +26,12 @@ function redactPaths(text: string): string {
  * not duplicate it.
  */
 const OPS = `# Memory usage
-When to recall: session/project start, before non-trivial decisions, when a past decision is referenced, before storing. Skip: trivial edits, info already grounded in context, same-session continuations.
+When to recall: session/project start, before non-trivial decisions, when a past decision is referenced, whenever the user asks about their own setup, preferences, or past conversations ("what did we decide", "where is my X"), before storing. Skip: trivial edits, info already grounded in context, same-session continuations.
 When to store proactively: learnings, preferences, decisions, corrections, mistakes that should never be repeated. Dedupe before storing; store atomic facts.
 
-- Recall relevant memory: \`ai-memory recall "<context>"\` (fuzzy/ranked); \`search "<text>"\` only for exact wording. \`-n <ns>\` to scope, \`--limit\` to cap, \`--format toon\` to save tokens
-- Store atomic facts: \`ai-memory store --title "..." --content "..." [--tier long]\` (default tier \`mid\` expires). Dedupe first via \`check-duplicate --title ... --content ...\`
+- Boot facts are a small fallback sample, NOT the full memory — never conclude "nothing is stored" without running \`recall\` first
+- Recall relevant memory: \`ai-memory recall "<context>"\` (fuzzy/ranked). Query = short natural-language summary with the key nouns ("AppImage scaling QT_SCALE_FACTOR"), not the user's raw message. Omit \`-n\` to search broadly; \`-n <ns>\` only when scope is certain. If a recall misses, reword once before giving up. \`search "<text>"\` only for exact wording; \`--limit\` to cap, \`--format toon\` to save tokens
+- Store atomic facts: \`ai-memory store --title "..." --content "..." [--tier long]\` — default tier \`mid\` expires; use \`--tier long\` for corrections/mistakes that must never repeat. Dedupe first via \`check-duplicate --title ... --content ...\`
 - Correct with \`update <id>\` — never pile near-duplicates on stale memories
 - Inspect: \`list\` / \`get <id>\` / \`stats\`
 - Destructive (\`delete\`, \`forget\`, \`gc\`) — confirm with user first
