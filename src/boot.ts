@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -14,10 +16,10 @@ const DB_LINE = /^\s*#*\s*db:/;
  * the database or config directly).
  */
 function redactPaths(text: string): string {
-  return text
-    .split("\n")
-    .filter((line) => !DB_LINE.test(line))
-    .join("\n");
+	return text
+		.split("\n")
+		.filter((line) => !DB_LINE.test(line))
+		.join("\n");
 }
 
 /**
@@ -50,20 +52,39 @@ Use table below to guide when to use namespace and tiers
 - MUST NOT read/access ai-memory configuration file; ask permission if before doing so and state the reason
 - MUST NOT edit ai-memory db directly`;
 
+const FALLBACK_BIN = join(homedir(), ".cargo", "bin", "ai-memory");
+
+let warnedSpawn = false;
+
+async function runBoot(bin: string): Promise<string> {
+	const { stdout } = await run(bin, ["boot", "--quiet"], { timeout: 10_000 });
+	return stdout;
+}
+
 /**
  * Run `ai-memory boot --quiet` and return the formatted system-prompt
  * section, or null when there is nothing to inject (missing binary,
  * non-zero exit, empty output). Never throws.
  */
 export async function bootSection(): Promise<string | null> {
-  try {
-    const { stdout } = await run("ai-memory", ["boot", "--quiet"], {
-      timeout: 10_000
-    });
-    const text = stdout.trim();
-    if (!text) return null;
-    return `\n\n${BOOT_MARKER}\n${redactPaths(text)}\n${OPS}`;
-  } catch {
-    return null;
-  }
+	let stdout: string;
+	try {
+		stdout = await runBoot("ai-memory");
+	} catch (err) {
+		try {
+			stdout = await runBoot(FALLBACK_BIN);
+		} catch {
+			if (!warnedSpawn) {
+				warnedSpawn = true;
+				console.warn(
+					"[pi-memory] `ai-memory` spawn failed (PATH + ~/.cargo/bin) — boot context skipped:",
+					err instanceof Error ? err.message : err,
+				);
+			}
+			return null;
+		}
+	}
+	const text = stdout.trim();
+	if (!text) return null;
+	return `\n\n${BOOT_MARKER}\n${redactPaths(text)}\n${OPS}`;
 }

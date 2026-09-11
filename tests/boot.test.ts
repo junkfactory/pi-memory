@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BOOT_MARKER, bootSection } from "../src/boot.js";
 
@@ -57,6 +59,40 @@ describe("bootSection", () => {
 	it("returns null when binary is missing", async () => {
 		execFileMock.queue = [new Error("spawn ai-memory ENOENT")];
 		await expect(bootSection()).resolves.toBeNull();
+	});
+});
+
+describe("fallback spawn", () => {
+	beforeEach(() => {
+		execFileMock.queue = [];
+	});
+
+	it("retries at ~/.cargo/bin when the bare name fails", async () => {
+		execFileMock.queue = [
+			new Error("spawn ai-memory ENOENT"),
+			"# ai-memory boot: info",
+		];
+		const out = await bootSection();
+		expect(out).toContain(BOOT_MARKER);
+		expect(execFileMock).toHaveBeenCalledWith(
+			join(homedir(), ".cargo", "bin", "ai-memory"),
+			["boot", "--quiet"],
+			expect.objectContaining({ timeout: 10_000 }),
+			expect.any(Function),
+		);
+	});
+
+	it("returns null and warns exactly once when both spawns fail", async () => {
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		execFileMock.queue = [
+			new Error("spawn ai-memory ENOENT"),
+			new Error("spawn ENOENT"),
+		];
+		await expect(bootSection()).resolves.toBeNull();
+		await expect(bootSection()).resolves.toBeNull();
+		expect(warnSpy).toHaveBeenCalledTimes(1);
+		expect(warnSpy.mock.calls[0][0]).toContain("[pi-memory]");
+		warnSpy.mockRestore();
 	});
 });
 
