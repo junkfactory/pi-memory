@@ -43,7 +43,7 @@ npx vitest run
 #
 # Empty-WC handling: after a `jj new main` the working copy is an empty
 # commit on top of main. `jj commit` on it would auto-create a new
-# undescribed commit and leave the bump in the parent (seen on v1.0.0:
+# undescribed commit and leave the bump in the parent (seen on pi-memory v1.0.0:
 # the tag pointed at a descriptionless commit). Instead, describe the
 # empty @ FIRST, then `jj commit` folds the bump into that described
 # commit — the tag lands on a properly-described release commit.
