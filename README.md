@@ -21,11 +21,10 @@ Requires the `ai-memory` CLI on PATH. Missing binary or empty DB → nothing is 
 
 ## Behaviour
 
-- Injects `ai-memory boot --quiet` output once per session, appended to the system prompt under `# ai-memory boot`.
-- Re-boots on new/resumed/forked sessions (memory state may have changed).
-- Skips injection if boot output is already present (guards against `ai-memory wrap` double-injection).
+- Injects `ai-memory boot --quiet` output into the system prompt under `# ai-memory boot` on every agent turn where the block is absent. Pi resets extension system-prompt changes at the start of each turn and compaction never re-fires `session_start`, so one-shot-per-session injection silently disappears from turn 1 onward — re-injecting keeps the block present across turns, after compaction, and picks up memory state changes mid-session.
+- Skips injection when the block is already present (guards against `ai-memory wrap` double-injection and avoids duplicating the persisted override from the previous turn).
 - A `# Memory usage` section (recall/store discipline; the agent-facing contract for the CLI) follows the boot facts — this package owns that guidance, so project AGENTS.md files don't have to.
-- A failed or empty boot is not retried within the same session.
+- A failed or empty boot retries on the next turn (transient failures self-heal).
 
 ## Development
 

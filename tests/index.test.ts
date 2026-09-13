@@ -37,7 +37,6 @@ describe("index", () => {
 		bootSectionMock.mockResolvedValue(`\n\n${BOOT_MARKER}\ninfo`);
 		const { pi, emit } = makePi();
 		extension(pi as never);
-		emit("session_start", { reason: "startup" });
 
 		const result = await emit("before_agent_start", turnEvent());
 		expect(result[0]).toEqual({
@@ -45,26 +44,36 @@ describe("index", () => {
 		});
 	});
 
-	it("does not inject on subsequent turns", async () => {
+	it("keeps the boot block present across turns", async () => {
+		// Pi persists a returned systemPrompt as an override, so the next
+		// turn's chained prompt already carries the marker — the extension
+		// must skip (no duplicate block, no extra boot call). When no
+		// handler returns a systemPrompt, pi resets to base and the
+		// extension re-injects. Net effect: marker present every turn.
 		bootSectionMock.mockResolvedValue(`\n\n${BOOT_MARKER}\ninfo`);
 		const { pi, emit } = makePi();
 		extension(pi as never);
-		emit("session_start", { reason: "startup" });
 
+		// Turn 0: inject.
 		await emit("before_agent_start", turnEvent());
+		// Turn 1: pi persisted the override → marker already present.
 		const second = await emit(
 			"before_agent_start",
-			turnEvent("base prompt\n\n# ai-memory boot\ninfo"),
+			turnEvent(`base prompt\n\n${BOOT_MARKER}\ninfo`),
 		);
-		expect(bootSectionMock).toHaveBeenCalledTimes(1);
 		expect(second[0]).toBeUndefined();
+		// Turn 2: pi reset to base (no handler returned a systemPrompt on
+		// turn 1) → re-inject.
+		const third = await emit("before_agent_start", turnEvent());
+		expect(third[0]).toEqual({
+			systemPrompt: `base prompt\n\n${BOOT_MARKER}\ninfo`,
+		});
+		expect(bootSectionMock).toHaveBeenCalledTimes(2);
 	});
 
 	it("skips injection when wrap already injected boot output", async () => {
-		bootSectionMock.mockResolvedValue(null);
 		const { pi, emit } = makePi();
 		extension(pi as never);
-		emit("session_start", { reason: "startup" });
 
 		const result = await emit(
 			"before_agent_start",
@@ -74,27 +83,20 @@ describe("index", () => {
 		expect(bootSectionMock).not.toHaveBeenCalled();
 	});
 
-	it("does not retry after a failed boot within the same session", async () => {
-		bootSectionMock.mockResolvedValue(null);
+	it("retries boot on the next turn after a failure", async () => {
+		// A transient boot failure must self-heal: the next turn retries
+		// instead of staying bootless for the rest of the session.
+		bootSectionMock.mockResolvedValueOnce(null);
+		bootSectionMock.mockResolvedValueOnce(`\n\n${BOOT_MARKER}\ninfo`);
 		const { pi, emit } = makePi();
 		extension(pi as never);
-		emit("session_start", { reason: "startup" });
 
-		await emit("before_agent_start", turnEvent());
-		await emit("before_agent_start", turnEvent());
-		expect(bootSectionMock).toHaveBeenCalledTimes(1);
-	});
-
-	it("re-boots after a new session starts", async () => {
-		bootSectionMock.mockResolvedValue(`\n\n${BOOT_MARKER}\ninfo`);
-		const { pi, emit } = makePi();
-		extension(pi as never);
-		emit("session_start", { reason: "startup" });
-		await emit("before_agent_start", turnEvent());
-
-		emit("session_start", { reason: "new" });
-		const result = await emit("before_agent_start", turnEvent());
+		const failed = await emit("before_agent_start", turnEvent());
+		expect(failed[0]).toBeUndefined();
+		const retried = await emit("before_agent_start", turnEvent());
+		expect(retried[0]).toEqual({
+			systemPrompt: `base prompt\n\n${BOOT_MARKER}\ninfo`,
+		});
 		expect(bootSectionMock).toHaveBeenCalledTimes(2);
-		expect(result[0]).toBeDefined();
 	});
 });
