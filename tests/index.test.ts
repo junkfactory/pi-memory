@@ -24,8 +24,11 @@ function makePi() {
 	};
 }
 
-function turnEvent(systemPrompt = "base prompt") {
-	return { systemPrompt, prompt: "hi" };
+function turnEvent(
+	systemPrompt = "base prompt",
+	sections: Record<string, string> = {},
+) {
+	return { systemPrompt, prompt: "hi", systemPromptOptions: { sections } };
 }
 
 describe("index", () => {
@@ -34,40 +37,43 @@ describe("index", () => {
 	});
 
 	it("injects boot section on first turn", async () => {
-		bootSectionMock.mockResolvedValue(`\n\n${BOOT_MARKER}\ninfo`);
+		const section = `\n\n${BOOT_MARKER}\ninfo`;
+		bootSectionMock.mockResolvedValue(section);
 		const { pi, emit } = makePi();
 		extension(pi as never);
 
-		const result = await emit("before_agent_start", turnEvent());
-		expect(result[0]).toEqual({
-			systemPrompt: `base prompt\n\n${BOOT_MARKER}\ninfo`,
-		});
+		const sections = {};
+		const result = await emit(
+			"before_agent_start",
+			turnEvent("base prompt", sections),
+		);
+		expect(result).toEqual([undefined]);
+		expect(sections.ai_memory_boot).toBe(section);
 	});
 
-	it("keeps the boot block present across turns", async () => {
-		// Pi persists a returned systemPrompt as an override, so the next
-		// turn's chained prompt already carries the marker — the extension
-		// must skip (no duplicate block, no extra boot call). When no
-		// handler returns a systemPrompt, pi resets to base and the
-		// extension re-injects. Net effect: marker present every turn.
-		bootSectionMock.mockResolvedValue(`\n\n${BOOT_MARKER}\ninfo`);
+	it("leaves a carried-over block untouched and re-adds on fresh prompts", async () => {
+		const section = `\n\n${BOOT_MARKER}\ninfo`;
+		bootSectionMock.mockResolvedValue(section);
 		const { pi, emit } = makePi();
 		extension(pi as never);
 
-		// Turn 0: inject.
-		await emit("before_agent_start", turnEvent());
-		// Turn 1: pi persisted the override → marker already present.
+		// Turn 0: inject into fresh options.
+		const firstSections = {};
+		await emit("before_agent_start", turnEvent("base prompt", firstSections));
+		expect(firstSections.ai_memory_boot).toBe(section);
+		// Turn 1: prompt already carries the wrap-style marker → skip,
+		// carried-over sections stay untouched, no extra boot call.
+		const carriedSections = {};
 		const second = await emit(
 			"before_agent_start",
-			turnEvent(`base prompt\n\n${BOOT_MARKER}\ninfo`),
+			turnEvent(`base prompt\n\n${BOOT_MARKER}\ninfo`, carriedSections),
 		);
-		expect(second[0]).toBeUndefined();
-		// Turn 2: pi reset to base (no handler returned a systemPrompt on
-		// turn 1) → re-inject.
-		const third = await emit("before_agent_start", turnEvent());
-		expect(third[0]).toEqual({
-			systemPrompt: `base prompt\n\n${BOOT_MARKER}\ninfo`,
-		});
+		expect(second).toEqual([undefined]);
+		expect(carriedSections.ai_memory_boot).toBeUndefined();
+		// Turn 2: fresh sections → section set again.
+		const thirdSections = {};
+		await emit("before_agent_start", turnEvent("base prompt", thirdSections));
+		expect(thirdSections.ai_memory_boot).toBe(section);
 		expect(bootSectionMock).toHaveBeenCalledTimes(2);
 	});
 
@@ -75,11 +81,13 @@ describe("index", () => {
 		const { pi, emit } = makePi();
 		extension(pi as never);
 
+		const sections = {};
 		const result = await emit(
 			"before_agent_start",
-			turnEvent(`base\n\n${BOOT_MARKER}\nexisting`),
+			turnEvent(`base\n\n${BOOT_MARKER}\nexisting`, sections),
 		);
-		expect(result[0]).toBeUndefined();
+		expect(result).toEqual([undefined]);
+		expect(sections.ai_memory_boot).toBeUndefined();
 		expect(bootSectionMock).not.toHaveBeenCalled();
 	});
 
@@ -91,12 +99,16 @@ describe("index", () => {
 		const { pi, emit } = makePi();
 		extension(pi as never);
 
-		const failed = await emit("before_agent_start", turnEvent());
-		expect(failed[0]).toBeUndefined();
-		const retried = await emit("before_agent_start", turnEvent());
-		expect(retried[0]).toEqual({
-			systemPrompt: `base prompt\n\n${BOOT_MARKER}\ninfo`,
-		});
+		const failedSections = {};
+		const failed = await emit(
+			"before_agent_start",
+			turnEvent("base prompt", failedSections),
+		);
+		expect(failed).toEqual([undefined]);
+		expect(failedSections.ai_memory_boot).toBeUndefined();
+		const retriedSections = {};
+		await emit("before_agent_start", turnEvent("base prompt", retriedSections));
+		expect(retriedSections.ai_memory_boot).toBe(`\n\n${BOOT_MARKER}\ninfo`);
 		expect(bootSectionMock).toHaveBeenCalledTimes(2);
 	});
 });

@@ -11,20 +11,19 @@ import { BOOT_MARKER, bootSection } from "./boot.js";
 
 export default function extension(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", async (event) => {
-		// Pi resets extension system-prompt changes at the start of every
-		// turn unless an extension re-applies them (agent-session.js resets
-		// to the base prompt whenever no handler returns a systemPrompt),
-		// and compaction never re-fires session_start — so a one-shot
-		// per-session injection silently disappears from turn 1 onward.
-		// Re-inject whenever the chained prompt lacks the marker; skip
-		// when it is already present (our own override persisted from the
-		// previous turn, or an `ai-memory wrap` injection).
-		if (event.systemPrompt.includes(BOOT_MARKER)) return undefined;
+		const sections = event.systemPromptOptions.sections;
+		// Transcript-backed sections (pi-coding-agent >= 0.86.0) survive
+		// resume and branch navigation with cached prefixes, so a single
+		// set carries across turns. The marker check keeps `ai-memory wrap`
+		// (which injects the same block into the prompt string) from
+		// doubling up.
+		if (event.systemPrompt.includes(BOOT_MARKER)) return;
+		if (sections.ai_memory_boot !== undefined) return;
 		const section = await bootSection();
 		// Nothing to inject (missing binary, empty DB, failed spawn).
-		// Returning without a systemPrompt lets pi reset to base; the
-		// next turn retries, so a transient boot failure self-heals.
-		if (section === null) return undefined;
-		return { systemPrompt: event.systemPrompt + section };
+		// Nothing is set; the next turn retries, so a transient boot
+		// failure self-heals.
+		if (section === null) return;
+		sections.ai_memory_boot = section;
 	});
 }
