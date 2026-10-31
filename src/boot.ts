@@ -7,6 +7,16 @@ const run = promisify(execFile);
 
 export const BOOT_MARKER = "# ai-memory boot";
 
+/** Subset of the `ai-memory recall --json` memory shape used by recall.ts. */
+export interface RecallMemory {
+	score: number;
+	id: string;
+	title: string;
+	content: string;
+	namespace: string;
+	tier: string;
+}
+
 /** Matches the boot header's db line regardless of leading decoration ("#   db: …", "db: …"). */
 const DB_LINE = /^\s*#*\s*db:/;
 
@@ -15,7 +25,7 @@ const DB_LINE = /^\s*#*\s*db:/;
  * should know what they know, not where it lives (and be tempted to edit
  * the database or config directly).
  */
-function redactPaths(text: string): string {
+export function redactPaths(text: string): string {
 	return text
 		.split("\n")
 		.filter((line) => !DB_LINE.test(line))
@@ -28,37 +38,43 @@ function redactPaths(text: string): string {
  * not duplicate it.
  */
 const OPS = `# Memory usage
-When to recall: session/project start, before non-trivial decisions, when a past decision is referenced, whenever the user asks about their own setup, preferences, or past conversations ("what did we decide", "where is my X"), before storing. Skip: trivial edits, info already grounded in context, same-session continuations.
-When to store proactively: learnings, preferences, decisions, corrections, mistakes that should never be repeated. Dedupe before storing; store atomic facts.
-
-- Boot facts are a small fallback sample, NOT the full memory — never conclude "nothing is stored" without running \`recall\` first
-- Recall relevant memory: \`ai-memory recall "<context>"\` (fuzzy/ranked). Query = short natural-language summary with the key nouns ("AppImage scaling QT_SCALE_FACTOR"), not the user's raw message. Omit \`-n\` to search broadly; \`-n <ns>\` only when scope is certain. If a recall misses, reword once before giving up. \`search "<text>"\` only for exact wording; \`--limit\` to cap, \`--format toon\` to save tokens
-- Store atomic facts: \`ai-memory store --title "..." --content "..." [--tier long]\` — default tier \`mid\` expires; use \`--tier long\` for corrections/mistakes that must never repeat. Dedupe first via \`check-duplicate --title ... --content ...\`
-- Correct with \`update <id>\` — never pile near-duplicates on stale memories
-- Inspect: \`list\` / \`get <id>\` / \`stats\`
-- Destructive (\`delete\`, \`forget\`, \`gc\`) — confirm with user first
-
-## Namespace and Tiers
-Use table below to guide when to use namespace and tiers
-| When | Namespace | Tier |
-|------|-----------|------|
-| System-wide, non-project, non-task memory | global | mid |
-| Project-specific code/decisions | snake_case cwd (e.g. pi_memory) | mid |
-| "Never repeat this mistake" correction | same namespace as context | long |
-| Continuation or task-related | task name | mid |
-| Unsure | ask user | — |
-
-## Non-negotiables
-- MUST NOT read/access ai-memory configuration file; ask permission if before doing so and state the reason
-- MUST NOT edit ai-memory db directly`;
+- Recall via the \`memory_recall\` MCP tool (not Bash) at session/task start, before non-trivial decisions, when a past decision is referenced, when the user asks about their setup/preferences/past conversations, and before storing. Query = short natural-language summary with key nouns, not the raw message; reword once if a recall misses.
+- Store atomic facts; dedupe before storing. Use \`--tier long\` for never-repeat corrections. Fix stale entries with \`update <id>\`, never pile up duplicates.
+- Boot facts are a small sample, NOT the full memory — never conclude nothing is stored without recalling.
+- Namespaces: global (system-wide), snake_case cwd (project), task name (continuation). Tiers: mid expires, long retains.
+- MUST NOT read/access ai-memory configuration file; ask permission before doing so and state the reason
+- MUST NOT edit ai-memory db directly
+- Destructive ops (delete/forget/gc): confirm with the user first`;
 
 const FALLBACK_BIN = join(homedir(), ".cargo", "bin", "ai-memory");
 
 let warnedSpawn = false;
 
-async function runBoot(bin: string): Promise<string> {
-	const { stdout } = await run(bin, ["boot", "--quiet"], { timeout: 10_000 });
+/** Run `bin args` and return stdout. Rejects when the spawn fails or exits non-zero. */
+export async function spawnOk(
+	bin: string,
+	args: string[],
+	timeout: number,
+	signal?: AbortSignal,
+): Promise<string> {
+	const { stdout } = await run(bin, args, { timeout, signal });
 	return stdout;
+}
+
+/**
+ * First usable ai-memory binary: bare `ai-memory` (PATH), then
+ * `~/.cargo/bin/ai-memory`. Null when neither spawns. Never throws.
+ */
+export async function resolveBinary(): Promise<string | null> {
+	for (const bin of ["ai-memory", FALLBACK_BIN]) {
+		try {
+			await spawnOk(bin, ["--version"], 5_000);
+			return bin;
+		} catch {
+			// try next candidate
+		}
+	}
+	return null;
 }
 
 /**
@@ -69,10 +85,10 @@ async function runBoot(bin: string): Promise<string> {
 export async function bootSection(): Promise<string | null> {
 	let stdout: string;
 	try {
-		stdout = await runBoot("ai-memory");
+		stdout = await spawnOk("ai-memory", ["boot", "--quiet"], 10_000);
 	} catch (err) {
 		try {
-			stdout = await runBoot(FALLBACK_BIN);
+			stdout = await spawnOk(FALLBACK_BIN, ["boot", "--quiet"], 10_000);
 		} catch {
 			if (!warnedSpawn) {
 				warnedSpawn = true;
