@@ -61,19 +61,41 @@ export async function spawnOk(
 	return stdout;
 }
 
+const NEGATIVE_TTL_MS = 60_000;
+let cachedBinary: string | null | undefined; // undefined = never probed
+let cachedAt = 0;
+
+// Test hook: module cache would otherwise leak between test cases.
+export function resetBinaryCache(): void {
+	cachedBinary = undefined;
+	cachedAt = 0;
+}
+
 /**
  * First usable ai-memory binary: bare `ai-memory` (PATH), then
  * `~/.cargo/bin/ai-memory`. Null when neither spawns. Never throws.
+ *
+ * A positive result is cached for the process (the resolved path won't
+ * change under us); a miss is cached for 60 s only, so a fresh install
+ * self-heals without paying two failed ENOENT probes per recall call.
  */
 export async function resolveBinary(): Promise<string | null> {
+	if (cachedBinary) return cachedBinary;
+	if (cachedBinary === null && Date.now() - cachedAt < NEGATIVE_TTL_MS) {
+		return null;
+	}
 	for (const bin of ["ai-memory", FALLBACK_BIN]) {
 		try {
 			await spawnOk(bin, ["--version"], 5_000);
+			cachedBinary = bin;
+			cachedAt = Date.now();
 			return bin;
 		} catch {
 			// try next candidate
 		}
 	}
+	cachedBinary = null;
+	cachedAt = Date.now();
 	return null;
 }
 

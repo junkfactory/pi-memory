@@ -1,7 +1,12 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BOOT_MARKER, bootSection } from "../src/boot.js";
+import {
+	BOOT_MARKER,
+	bootSection,
+	resetBinaryCache,
+	resolveBinary,
+} from "../src/boot.js";
 
 const execFileMock = vi.hoisted(() => vi.fn());
 
@@ -115,5 +120,47 @@ describe("redactPaths (via bootSection)", () => {
 		const out = await bootSection();
 		expect(out).not.toContain("memory.db");
 		expect(out).toContain("#   tier: semantic");
+	});
+});
+
+describe("resolveBinary", () => {
+	beforeEach(() => {
+		execFileMock.queue = [];
+		execFileMock.mockClear();
+		resetBinaryCache();
+	});
+
+	it("caches a positive probe and skips re-probing", async () => {
+		execFileMock.queue = ["ai-memory 0.10.0"];
+
+		await expect(resolveBinary()).resolves.toBe("ai-memory");
+		await expect(resolveBinary()).resolves.toBe("ai-memory");
+		expect(execFileMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("treats a miss as valid for 60s, then re-probes for a fresh install", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		try {
+			execFileMock.queue = [
+				new Error("spawn ENOENT"),
+				new Error("spawn ENOENT"),
+			];
+			await expect(resolveBinary()).resolves.toBeNull();
+			expect(execFileMock).toHaveBeenCalledTimes(2);
+
+			// Inside the TTL a miss is reused: no probe spawns at all.
+			vi.setSystemTime(30_000);
+			await expect(resolveBinary()).resolves.toBeNull();
+			expect(execFileMock).toHaveBeenCalledTimes(2);
+
+			// Past the TTL it re-probes and a fresh install self-heals.
+			vi.setSystemTime(61_000);
+			execFileMock.queue = ["ai-memory 0.10.0"];
+			await expect(resolveBinary()).resolves.toBe("ai-memory");
+			expect(execFileMock).toHaveBeenCalledTimes(3);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

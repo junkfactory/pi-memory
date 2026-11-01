@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resetBinaryCache } from "../src/boot.js";
 import { recallForPrompt } from "../src/recall.js";
 
 const execFileMock = vi.hoisted(() => vi.fn());
@@ -61,6 +62,7 @@ describe("recallForPrompt", () => {
 	beforeEach(() => {
 		execFileMock.queue = [];
 		execFileMock.mockClear();
+		resetBinaryCache();
 	});
 
 	it("formats memories above the score floor with tier/id/ns/score and a footer", async () => {
