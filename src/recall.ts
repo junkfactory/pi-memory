@@ -95,6 +95,40 @@ async function queryTier(
 }
 
 /**
+ * Query ai-memory for `query` and return the memories clearing their tier's
+ * score floor. Semantic is tried first; keyword runs only when semantic
+ * fails outright (spawn, non-zero exit, malformed output) — a healthy
+ * semantic no-match is final, because semantic subsumes lexical matching and
+ * keyword would only add noise.
+ *
+ * Both floors live here so every consumer (per-turn recall, the
+ * `memory_recall` tool) shares identical miss semantics. Resolves to the
+ * survivors (possibly empty — a healthy no-match); rejects when BOTH tiers
+ * fail, so a broken CLI is never reported as a clean no-match. Warns at
+ * most once per process.
+ */
+export async function queryMemories(
+	bin: string,
+	query: string,
+	signal?: AbortSignal,
+): Promise<RecallMemory[]> {
+	try {
+		return await queryTier(bin, "semantic", semanticFloor(), query, signal);
+	} catch (err) {
+		// Semantic tier unavailable (embedder failure, bad exit, malformed
+		// output); fall through to keyword.
+		warnOnce(err);
+	}
+	try {
+		return await queryTier(bin, "keyword", KEYWORD_FLOOR, query, signal);
+	} catch (err) {
+		// Total failure: surface it instead of masking it as no-match.
+		warnOnce(err);
+		throw err;
+	}
+}
+
+/**
  * Recall memories for `prompt` and return a formatted `<ai-memory recall>`
  * block, or null when nothing clears the score floor, the DB has no match,
  * or the CLI fails. Never throws; warns at most once per process.
@@ -106,41 +140,19 @@ export async function recallForPrompt(
 	const query = prompt.trim().slice(0, QUERY_LIMIT);
 	if (!query) return null;
 
-		const bin = await resolveBinary();
-		if (bin === null) {
-			warnOnce(new Error("binary not found (PATH + ~/.cargo/bin)"));
-			return null;
-		}
-
-		try {
-			const memories = await queryTier(
-				bin,
-				"semantic",
-				semanticFloor(),
-				query,
-				signal,
-			);
-			// Healthy no-match (count 0 or all below floor) is a final answer:
-			// semantic subsumes lexical matching, so keyword would only add noise.
-			if (memories.length > 0) return format(memories);
-			return null;
-		} catch (err) {
-			// Semantic tier unavailable (embedder failure, bad exit, malformed
-			// output); fall through to keyword.
-			warnOnce(err);
-		}
-
-		try {
-			const memories = await queryTier(
-				bin,
-				"keyword",
-				KEYWORD_FLOOR,
-				query,
-				signal,
-			);
-			if (memories.length > 0) return format(memories);
-		} catch (err) {
-			warnOnce(err);
-		}
+	const bin = await resolveBinary();
+	if (bin === null) {
+		warnOnce(new Error("binary not found (PATH + ~/.cargo/bin)"));
 		return null;
+	}
+
+	// Per-turn recall is best-effort: a total query failure (both tiers)
+	// drops the block only, never the turn.
+	let memories: RecallMemory[];
+	try {
+		memories = await queryMemories(bin, query, signal);
+	} catch {
+		return null;
+	}
+	return memories.length > 0 ? format(memories) : null;
 }

@@ -5,32 +5,44 @@ import extension from "../src/index.js";
 vi.mock("../src/boot.js", () => ({
 	BOOT_MARKER: "# ai-memory boot",
 	bootSection: vi.fn(),
-	resolveBinary: vi.fn(),
 }));
 
 vi.mock("../src/recall.js", () => ({
 	recallForPrompt: vi.fn(),
 }));
 
+// The tool definitions are exercised in tests/tools-read.test.ts; index only
+// needs stable identities to assert registration ordering.
+vi.mock("../src/tools.js", () => ({
+	memoryRecallTool: { name: "memory_recall" },
+	memorySearchTool: { name: "memory_search" },
+	memoryGetTool: { name: "memory_get" },
+	memoryStoreTool: { name: "memory_store" },
+	memoryUpdateTool: { name: "memory_update" },
+	memoryDeleteTool: { name: "memory_delete" },
+	memoryLedgerTool: { name: "memory_ledger" },
+}));
+
 const bootMocks = await import("../src/boot.js");
 const bootSectionMock = vi.mocked(bootMocks.bootSection);
-const resolveBinaryMock = vi.mocked(bootMocks.resolveBinary);
 const recallMocks = await import("../src/recall.js");
 const recallForPromptMock = vi.mocked(recallMocks.recallForPrompt);
 
-function makePi(mcpServers: Array<{ name: string }> = []) {
+function makePi() {
 	const handlers: Record<string, Array<(event?: unknown) => unknown>> = {};
 	const registerMcpServer = vi.fn();
+	const registerTool = vi.fn();
 	return {
 		registerMcpServer,
+		registerTool,
 		pi: {
 			on: (name: string, fn: (event?: unknown) => unknown) => {
 				const list = handlers[name] ?? [];
 				list.push(fn);
 				handlers[name] = list;
 			},
-			getMcpServers: () => mcpServers,
 			registerMcpServer,
+			registerTool,
 		},
 		emit: async (name: string, event?: unknown, ctx?: unknown) =>
 			Promise.all((handlers[name] ?? []).map((fn) => fn(event, ctx))),
@@ -60,40 +72,16 @@ function contextEvent(
 describe("index", () => {
 	beforeEach(() => {
 		bootSectionMock.mockReset();
-		resolveBinaryMock.mockReset();
 		recallForPromptMock.mockReset();
 	});
 
-	it("registers the ai-memory MCP server on session_start when absent", async () => {
-		resolveBinaryMock.mockResolvedValue("/usr/local/bin/ai-memory");
+	it("never registers the ai-memory MCP server on session_start", async () => {
+		// The tailored memory_* tools replace the MCP surface; session_start
+		// only resets the recall dedupe state.
 		const { pi, emit, registerMcpServer } = makePi();
 		extension(pi as never);
 
 		await emit("session_start", { type: "session_start", reason: "startup" });
-		expect(registerMcpServer).toHaveBeenCalledWith("ai-memory", {
-			command: "/usr/local/bin/ai-memory",
-			args: ["mcp"],
-			description: "ai-memory CLI — store/recall/search learned memories",
-		});
-	});
-
-	it("skips MCP registration when an ai-memory server already exists", async () => {
-		const { pi, emit, registerMcpServer } = makePi([{ name: "ai-memory" }]);
-		extension(pi as never);
-
-		await emit("session_start", { type: "session_start", reason: "startup" });
-		expect(resolveBinaryMock).not.toHaveBeenCalled();
-		expect(registerMcpServer).not.toHaveBeenCalled();
-	});
-
-	it("registers nothing and does not throw when the binary is missing", async () => {
-		resolveBinaryMock.mockResolvedValue(null);
-		const { pi, emit, registerMcpServer } = makePi();
-		extension(pi as never);
-
-		await expect(
-			emit("session_start", { type: "session_start", reason: "startup" }),
-		).resolves.toEqual([undefined]);
 		expect(registerMcpServer).not.toHaveBeenCalled();
 	});
 
@@ -295,20 +283,6 @@ describe("index", () => {
 		});
 		await emit("context", contextEvent("hello"));
 		expect(recallForPromptMock).toHaveBeenCalledTimes(4);
-	});
-
-	it("still registers the session when another extension races the name", async () => {
-		resolveBinaryMock.mockResolvedValue("/usr/local/bin/ai-memory");
-		const { pi, emit, registerMcpServer } = makePi();
-		registerMcpServer.mockImplementation(() => {
-			throw new Error(`MCP server "ai-memory" is already registered`);
-		});
-		extension(pi as never);
-
-		await expect(
-			emit("session_start", { type: "session_start", reason: "startup" }),
-		).resolves.toEqual([undefined]);
-		expect(registerMcpServer).toHaveBeenCalledTimes(1);
 	});
 
 	it("does not throw or retry when recall rejects", async () => {

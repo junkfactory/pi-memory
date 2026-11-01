@@ -220,11 +220,7 @@ describe("recallForPrompt", () => {
 	});
 
 	it("returns null on an empty memories array without fallback", async () => {
-		queue(
-			"ai-memory 0.10.0",
-			envelope([], 1),
-			envelope([], 1),
-		);
+		queue("ai-memory 0.10.0", envelope([], 1), envelope([], 1));
 		expect(await recallForPrompt("q")).toBeNull();
 		const recallCalls = execFileMock.mock.calls.filter(
 			(call) => (call[1] as string[] | undefined)?.[0] === "recall",

@@ -12,8 +12,17 @@ import type {
 	ContextEventResult,
 	ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import { BOOT_MARKER, bootSection, resolveBinary } from "./boot.js";
+import { BOOT_MARKER, bootSection } from "./boot.js";
 import { recallForPrompt } from "./recall.js";
+import {
+	memoryDeleteTool,
+	memoryGetTool,
+	memoryLedgerTool,
+	memoryRecallTool,
+	memorySearchTool,
+	memoryStoreTool,
+	memoryUpdateTool,
+} from "./tools.js";
 
 /** Text of a user message: plain string or an array of text content parts. */
 function userText(message: unknown): string | null {
@@ -34,34 +43,25 @@ function userText(message: unknown): string | null {
 }
 
 export default function extension(pi: ExtensionAPI): void {
+	// Load-time registration is safe: the tools resolve the binary per call,
+	// so no async work happens before the first execute.
+	pi.registerTool(memoryRecallTool);
+	pi.registerTool(memorySearchTool);
+	pi.registerTool(memoryGetTool);
+	pi.registerTool(memoryStoreTool);
+	pi.registerTool(memoryUpdateTool);
+	pi.registerTool(memoryDeleteTool);
+	pi.registerTool(memoryLedgerTool);
+
 	// Last user-prompt hash this session already recalled for. Keeps the
 	// repeated `context` events within one turn (tool-call iterations) from
 	// re-running recall. In-memory only; never persisted.
 	let lastPromptHash: string | null = null;
 
-	// Async binary resolution rules out load-time registration, so this
-	// runs on session_start. Skips when an `ai-memory` server already
-	// exists (earlier registration or mcp.json entry) and registers nothing
-	// when the binary is absent.
-	pi.on("session_start", async () => {
-		// Dedupe state is per session branch: resume/new must not inherit the
-		// previous session's hash or its first recall would be suppressed.
+	// Dedupe state is per session branch: resume/new must not inherit the
+	// previous session's hash or its first recall would be suppressed.
+	pi.on("session_start", () => {
 		lastPromptHash = null;
-		if (pi.getMcpServers().some((server) => server.name === "ai-memory")) {
-			return;
-		}
-		const command = await resolveBinary();
-		if (command === null) return;
-		try {
-			pi.registerMcpServer("ai-memory", {
-				command,
-				args: ["mcp"],
-				description: "ai-memory CLI — store/recall/search learned memories",
-			});
-		} catch {
-			// A duplicate registered by another extension since our guard ran:
-			// theirs wins; never fatal.
-		}
 	});
 
 	// Branch navigation swaps the transcript; the hash is per branch, so a
