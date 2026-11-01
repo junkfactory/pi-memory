@@ -1,6 +1,12 @@
 /**
  * Per-turn automatic recall: ask ai-memory for memories relevant to the
  * current user prompt and format them as an ephemeral context block.
+ *
+ * Primary tier is semantic (cosine scores, 0-1): learned lessons share
+ * vocabulary with the future prompt only rarely, so lexical recall misses
+ * exactly the self-improvement memories this extension exists to resurface.
+ * Falls back to keyword on a semantic failure (spawn, exit non-zero, or
+ * unparseable output).
  */
 
 import {
@@ -11,7 +17,10 @@ import {
 } from "./boot.js";
 
 const QUERY_LIMIT = 300;
-const SCORE_FLOOR = 5.0;
+/** Cosine-similarity floor for the semantic tier. Initial guess; recalibrate on a populated DB. */
+const SEMANTIC_FLOOR = 0.5;
+/** Keyword-scale floor (keyword scores are 0-100-ish), for the fallback path only. */
+const KEYWORD_FLOOR = 5.0;
 const RECALL_TIMEOUT = 5_000;
 
 let warnedRecall = false;
@@ -35,6 +44,50 @@ function format(memories: RecallMemory[]): string {
 }
 
 /**
+ * Run `recall -T <tier>` and filter by that tier's score scale. Tier is a
+ * format override on the invocation — NOT the memory's storage tier.
+ * Resolves to the surviving memories (possibly empty — a healthy no-match)
+ * or throws on spawn/parse failure.
+ */
+async function queryTier(
+	bin: string,
+	tier: "semantic" | "keyword",
+	floor: number,
+	query: string,
+	signal?: AbortSignal,
+): Promise<RecallMemory[]> {
+	console.log("DBG-QUERYTIER tier=", tier, "floor=", floor);
+	const stdout = await spawnOk(
+		bin,
+		[
+			"recall",
+			"-T",
+			tier,
+			"--limit",
+			"5",
+			"--budget-tokens",
+			"300",
+			"--json",
+			// Guards the positional query: a prompt starting with `-` must
+			// be parsed as text, never as a CLI flag.
+			"--",
+			query,
+		],
+		RECALL_TIMEOUT,
+		signal,
+	);
+	console.log("DBG-QUERYTIER stdout=", stdout.slice(0, 120));
+	const envelope = JSON.parse(stdout) as {
+		count?: unknown;
+		memories?: unknown;
+	};
+	if (!Array.isArray(envelope.memories)) return [];
+	return (envelope.memories as RecallMemory[]).filter(
+		(m) => typeof m.score === "number" && m.score >= floor,
+	);
+}
+
+/**
  * Recall memories for `prompt` and return a formatted `<ai-memory recall>`
  * block, or null when nothing clears the score floor, the DB has no match,
  * or the CLI fails. Never throws; warns at most once per process.
@@ -46,44 +99,41 @@ export async function recallForPrompt(
 	const query = prompt.trim().slice(0, QUERY_LIMIT);
 	if (!query) return null;
 
-	try {
 		const bin = await resolveBinary();
 		if (bin === null) {
 			warnOnce(new Error("binary not found (PATH + ~/.cargo/bin)"));
 			return null;
 		}
-		const stdout = await spawnOk(
-			bin,
-			[
-				"recall",
-				"-T",
-				"keyword",
-				"--limit",
-				"5",
-				"--budget-tokens",
-				"300",
-				"--json",
-				// Guards the positional query: a prompt starting with `-` must
-				// be parsed as text, never as a CLI flag.
-				"--",
+
+		try {
+			const memories = await queryTier(
+				bin,
+				"semantic",
+				SEMANTIC_FLOOR,
 				query,
-			],
-			RECALL_TIMEOUT,
-			signal,
-		);
-		const envelope = JSON.parse(stdout) as {
-			count?: unknown;
-			memories?: unknown;
-		};
-		if (envelope.count === 0) return null;
-		if (!Array.isArray(envelope.memories)) return null;
-		const survivors = (envelope.memories as RecallMemory[]).filter(
-			(m) => typeof m.score === "number" && m.score >= SCORE_FLOOR,
-		);
-		if (survivors.length === 0) return null;
-		return format(survivors);
-	} catch (err) {
-		warnOnce(err);
+				signal,
+			);
+			// Healthy no-match (count 0 or all below floor) is a final answer:
+			// semantic subsumes lexical matching, so keyword would only add noise.
+			if (memories.length > 0) return format(memories);
+			return null;
+		} catch (err) {
+			// Semantic tier unavailable (embedder failure, bad exit, malformed
+			// output); fall through to keyword.
+			warnOnce(err);
+		}
+
+		try {
+			const memories = await queryTier(
+				bin,
+				"keyword",
+				KEYWORD_FLOOR,
+				query,
+				signal,
+			);
+			if (memories.length > 0) return format(memories);
+		} catch (err) {
+			warnOnce(err);
+		}
 		return null;
-	}
 }

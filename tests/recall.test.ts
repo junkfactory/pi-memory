@@ -48,8 +48,9 @@ function envelope(memories: unknown[], count = memories.length) {
 	});
 }
 
-function queue(binResult: string | Error, recallResult: string | Error) {
-	execFileMock.queue = [binResult, recallResult];
+// One entry per spawn: binary resolution first, then one per recall attempt.
+function queue(...results: Array<string | Error>) {
+	execFileMock.queue = results;
 }
 
 function recallCall() {
@@ -77,7 +78,7 @@ describe("recallForPrompt", () => {
 		expect(out).toContain("</ai-memory recall>");
 	});
 
-	it("passes the documented argv with the query truncated to 300 chars", async () => {
+	it("passes the documented argv (semantic tier) with the query truncated to 300 chars", async () => {
 		queue("ai-memory 0.10.0", envelope([memory()]));
 
 		await recallForPrompt("x".repeat(400));
@@ -87,7 +88,7 @@ describe("recallForPrompt", () => {
 		expect(call?.[1]).toEqual([
 			"recall",
 			"-T",
-			"keyword",
+			"semantic",
 			"--limit",
 			"5",
 			"--budget-tokens",
@@ -97,6 +98,29 @@ describe("recallForPrompt", () => {
 			"x".repeat(300),
 		]);
 		expect(call?.[2]).toMatchObject({ timeout: 5_000 });
+	});
+
+	it("does not fall back to keyword when the semantic call succeeds", async () => {
+		queue("ai-memory 0.10.0", envelope([memory()]));
+
+		await recallForPrompt("q");
+
+		const recallCalls = execFileMock.mock.calls.filter(
+			(call) => (call[1] as string[] | undefined)?.[0] === "recall",
+		);
+		expect(recallCalls).toHaveLength(1);
+	});
+
+	it("falls back to keyword when the semantic call fails", async () => {
+		queue("ai-memory 0.10.0", new Error("exit 1"), envelope([memory()]));
+
+		const out = await recallForPrompt("q");
+
+		expect(out).toContain("[long/abc123]");
+		const argvs = execFileMock.mock.calls
+			.filter((call) => (call[1] as string[] | undefined)?.[0] === "recall")
+			.map((call) => (call[1] as string[])[2]);
+		expect(argvs).toEqual(["semantic", "keyword"]);
 	});
 
 	it("keeps a prompt with shell metacharacters as one argv element", async () => {
@@ -117,20 +141,30 @@ describe("recallForPrompt", () => {
 		expect(argv?.at(-1)).toBe("-T semantic --help");
 	});
 
-	it("drops memories below score 5.0", async () => {
-		queue("ai-memory 0.10.0", envelope([memory()]));
+	it("drops memories below the semantic floor (0.5)", async () => {
+		queue("ai-memory 0.10.0", envelope([memory({ score: 0.6 })]));
 		expect(await recallForPrompt("q")).not.toBeNull();
+		execFileMock.mockClear();
 
-		queue("ai-memory 0.10.0", envelope([memory({ score: 4.99 })]));
+		// Binary is cached from the first invocation above: no probe item.
+		queue(
+			envelope([memory({ score: 0.49 })]),
+			envelope([memory({ score: 9.9 })]), // must NOT be consumed by a fallback
+		);
 		expect(await recallForPrompt("q")).toBeNull();
+		// A healthy semantic no-match is final — keyword is noise, not a rescue.
+		const recallCalls = execFileMock.mock.calls.filter(
+			(call) => (call[1] as string[] | undefined)?.[0] === "recall",
+		);
+		expect(recallCalls).toHaveLength(1);
 	});
 
 	it("keeps only survivors when scores straddle the floor", async () => {
 		queue(
 			"ai-memory 0.10.0",
 			envelope([
-				memory({ id: "gold", score: 8.7 }),
-				memory({ id: "noise", score: 0.65 }),
+				memory({ id: "gold", score: 0.87 }),
+				memory({ id: "noise", score: 0.45 }),
 			]),
 		);
 
@@ -141,28 +175,45 @@ describe("recallForPrompt", () => {
 		expect(out).toContain("1 memory(ies) recalled");
 	});
 
-	it("returns null on count 0", async () => {
-		queue("ai-memory 0.10.0", envelope([], 0));
+	it("returns null on count 0 (no fallback spawn)", async () => {
+		queue("ai-memory 0.10.0", envelope([], 0), envelope([memory()]));
+		expect(await recallForPrompt("q")).toBeNull();
+		// count 0 is a healthy answer, not a failure: no keyword fallback.
+		const recallCalls = execFileMock.mock.calls.filter(
+			(call) => (call[1] as string[] | undefined)?.[0] === "recall",
+		);
+		expect(recallCalls).toHaveLength(1);
+	});
+
+	it("returns null on an empty memories array without fallback", async () => {
+		queue(
+			"ai-memory 0.10.0",
+			envelope([], 1),
+			envelope([], 1),
+		);
+		expect(await recallForPrompt("q")).toBeNull();
+		const recallCalls = execFileMock.mock.calls.filter(
+			(call) => (call[1] as string[] | undefined)?.[0] === "recall",
+		);
+		expect(recallCalls).toHaveLength(1);
+	});
+
+	it("returns null on malformed JSON (both tiers)", async () => {
+		queue("ai-memory 0.10.0", "not json at all", "still not json");
 		expect(await recallForPrompt("q")).toBeNull();
 	});
 
-	it("returns null on an empty memories array", async () => {
-		queue("ai-memory 0.10.0", envelope([], 1));
+	it("returns null on non-zero exit (both tiers)", async () => {
+		queue(
+			"ai-memory 0.10.0",
+			new Error("Command failed: exit 1"),
+			new Error("Command failed: exit 1"),
+		);
 		expect(await recallForPrompt("q")).toBeNull();
 	});
 
-	it("returns null on malformed JSON", async () => {
-		queue("ai-memory 0.10.0", "not json at all");
-		expect(await recallForPrompt("q")).toBeNull();
-	});
-
-	it("returns null on non-zero exit", async () => {
-		queue("ai-memory 0.10.0", new Error("Command failed: exit 1"));
-		expect(await recallForPrompt("q")).toBeNull();
-	});
-
-	it("returns null on timeout", async () => {
-		queue("ai-memory 0.10.0", new Error("ETIMEDOUT"));
+	it("returns null on timeout (both tiers)", async () => {
+		queue("ai-memory 0.10.0", new Error("ETIMEDOUT"), new Error("ETIMEDOUT"));
 		expect(await recallForPrompt("q")).toBeNull();
 	});
 
@@ -198,9 +249,9 @@ describe("recallForPrompt", () => {
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 		const fresh = await import("../src/recall.js");
 
-		queue("ai-memory 0.10.0", new Error("exit 1"));
+		queue("ai-memory 0.10.0", new Error("exit 1"), new Error("exit 1b"));
 		await expect(fresh.recallForPrompt("first")).resolves.toBeNull();
-		queue("ai-memory 0.10.0", new Error("exit 2"));
+		queue("ai-memory 0.10.0", new Error("exit 2"), new Error("exit 2b"));
 		await expect(fresh.recallForPrompt("second")).resolves.toBeNull();
 
 		expect(warnSpy).toHaveBeenCalledTimes(1);

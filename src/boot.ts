@@ -38,13 +38,9 @@ export function redactPaths(text: string): string {
  * not duplicate it.
  */
 const OPS = `# Memory usage
-- Recall via the \`memory_recall\` MCP tool (not Bash) at session/task start, before non-trivial decisions, when a past decision is referenced, when the user asks about their setup/preferences/past conversations, and before storing. Query = short natural-language summary with key nouns, not the raw message; reword once if a recall misses.
-- Store atomic facts; dedupe before storing. Use \`--tier long\` for never-repeat corrections. Fix stale entries with \`update <id>\`, never pile up duplicates.
-- Boot facts are a small sample, NOT the full memory — never conclude nothing is stored without recalling.
-- Namespaces: global (system-wide), snake_case cwd (project), task name (continuation). Tiers: mid expires, long retains.
-- MUST NOT read/access ai-memory configuration file; ask permission before doing so and state the reason
-- MUST NOT edit ai-memory db directly
-- Destructive ops (delete/forget/gc): confirm with the user first`;
+- Recall via \`memory_recall\` MCP (not Bash) at session/task start, before non-trivial decisions, past-decision references, or user setup/preference questions. Query = short natural-language summary with key nouns; reword once on a miss. Boot facts are a sample only — recall before concluding nothing is stored.
+- When you make a mistake, get corrected, or discover what doesn't work, STORE the lesson via the memory MCP before finishing the reply — what to do (or not do) next time, so you never repeat the mistake. Not project trivia. Atomic, deduped (fix stale entries via \`update <id>\`, never pile up). Namespace: global / snake_case cwd / task. Tier \`long\` for never-repeat corrections; mid expires.
+- MUST NOT read/edit ai-memory config or db directly. Destructive ops (delete/forget/gc): confirm with the user first.`;
 
 const FALLBACK_BIN = join(homedir(), ".cargo", "bin", "ai-memory");
 
