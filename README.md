@@ -25,6 +25,7 @@ Requires the `ai-memory` CLI on PATH. Missing binary or empty DB → nothing is 
 - Skips injection when the block is already present (guards against `ai-memory wrap` double-injection and avoids duplicating the persisted override from the previous turn).
 - A `# Memory usage` section (recall/store discipline; the agent-facing contract for the CLI) follows the boot facts — this package owns that guidance, so project AGENTS.md files don't have to.
 - A failed or empty boot retries on the next turn (transient failures self-heal).
+- Per-prompt recall runs `ai-memory recall -T semantic` (cosine scores); a healthy no-match is final, and keyword tier is used only as the fallback when the semantic call fails. The semantic score floor defaults to 0.5 and can be overridden live with `PI_MEMORY_SEMANTIC_FLOOR` (a number in [0,1], read at each recall call; invalid values fall back to 0.5).
 
 ## Development
 

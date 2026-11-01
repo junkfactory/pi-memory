@@ -141,6 +141,40 @@ describe("recallForPrompt", () => {
 		expect(argv?.at(-1)).toBe("-T semantic --help");
 	});
 
+	it("honors PI_MEMORY_SEMANTIC_FLOOR, clamped to [0,1]", async () => {
+		const prev = process.env.PI_MEMORY_SEMANTIC_FLOOR;
+		try {
+			// Each subcase resets the binary cache so the lookup table below
+			// (probe item first) stays deterministic.
+			resetBinaryCache();
+			process.env.PI_MEMORY_SEMANTIC_FLOOR = "0.9";
+			queue(
+				"ai-memory 0.10.0",
+				envelope([memory({ score: 0.6 })]),
+				envelope([memory({ score: 9.9 })]),
+			);
+			expect(await recallForPrompt("q")).toBeNull(); // below raised floor
+
+			process.env.PI_MEMORY_SEMANTIC_FLOOR = "5";
+			resetBinaryCache();
+			queue(
+				"ai-memory 0.10.0",
+				envelope([memory({ score: 0.99 })]),
+				envelope([memory({ score: 1.0 })]),
+			);
+			expect(await recallForPrompt("q")).toBeNull(); // 0.99 < clamped 1
+			expect(await recallForPrompt("q")).not.toBeNull(); // boundary inclusive
+
+			process.env.PI_MEMORY_SEMANTIC_FLOOR = "garbage";
+			resetBinaryCache();
+			queue("ai-memory 0.10.0", envelope([memory({ score: 0.6 })]));
+			expect(await recallForPrompt("q")).not.toBeNull(); // falls back to 0.5
+		} finally {
+			if (prev === undefined) delete process.env.PI_MEMORY_SEMANTIC_FLOOR;
+			else process.env.PI_MEMORY_SEMANTIC_FLOOR = prev;
+		}
+	});
+
 	it("drops memories below the semantic floor (0.5)", async () => {
 		queue("ai-memory 0.10.0", envelope([memory({ score: 0.6 })]));
 		expect(await recallForPrompt("q")).not.toBeNull();

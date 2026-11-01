@@ -17,8 +17,17 @@ import {
 } from "./boot.js";
 
 const QUERY_LIMIT = 300;
-/** Cosine-similarity floor for the semantic tier. Initial guess; recalibrate on a populated DB. */
-const SEMANTIC_FLOOR = 0.5;
+/**
+ * Cosine-similarity floor for the semantic tier. Initial guess 0.5;
+ * recalibrate on a populated DB. Overridable via `PI_MEMORY_SEMANTIC_FLOOR`,
+ * re-read per recall call and clamped to [0, 1].
+ */
+function semanticFloor(): number {
+	const raw = process.env.PI_MEMORY_SEMANTIC_FLOOR;
+	const floor = raw === undefined || raw === "" ? NaN : Number(raw);
+	if (Number.isNaN(floor)) return 0.5;
+	return Math.min(1, Math.max(0, floor));
+}
 /** Keyword-scale floor (keyword scores are 0-100-ish), for the fallback path only. */
 const KEYWORD_FLOOR = 5.0;
 const RECALL_TIMEOUT = 5_000;
@@ -56,7 +65,6 @@ async function queryTier(
 	query: string,
 	signal?: AbortSignal,
 ): Promise<RecallMemory[]> {
-	console.log("DBG-QUERYTIER tier=", tier, "floor=", floor);
 	const stdout = await spawnOk(
 		bin,
 		[
@@ -76,7 +84,6 @@ async function queryTier(
 		RECALL_TIMEOUT,
 		signal,
 	);
-	console.log("DBG-QUERYTIER stdout=", stdout.slice(0, 120));
 	const envelope = JSON.parse(stdout) as {
 		count?: unknown;
 		memories?: unknown;
@@ -109,7 +116,7 @@ export async function recallForPrompt(
 			const memories = await queryTier(
 				bin,
 				"semantic",
-				SEMANTIC_FLOOR,
+				semanticFloor(),
 				query,
 				signal,
 			);
